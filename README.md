@@ -57,3 +57,16 @@ git -C /tmp/anthropic-skills log -1 --format=%H
 ```
 
 Read the diff of the skill's folder since the commit above, copy it over `.claude/skills/<name>/`, and update the commit and review note in this table.
+
+## Claude Code token usage
+
+[.claude/hooks/log_tokens_to_mlflow.py](.claude/hooks/log_tokens_to_mlflow.py) logs Claude Code token usage
+to the `claude-code-usage` experiment in `mlflow.db` (one run per session, updated after every turn).
+
+- Live logging: registered as a `Stop` hook in `~/.claude/settings.json`, so it runs for every project. It runs in the background, and errors go to `~/.claude/mlflow-usage-hook.log`.
+- Backfill past sessions: `python .claude/hooks/log_tokens_to_mlflow.py --backfill`
+- Metrics: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`,
+  `total_tokens`, `thinking_tokens`, `cache_hit_ratio`, `api_calls`, plus `<model>/<metric>` per model.
+- Tags: `project`, `session_id`, `git_branch`, `primary_model`, `first_prompt`.
+- Traces: one trace per prompt, made of an agent span, a span per LLM call (model and token usage) and a span per tool call.
+  These feed the GenAI **Traces**, **Sessions** and **Dashboard** pages, where MLflow also estimates cost. Turns that are already logged are skipped.
