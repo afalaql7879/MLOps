@@ -16,6 +16,7 @@ Everything lives under [`.claude/`](.claude) and is committed to git, so anyone 
 ├── agents/
 │   └── experiment-reviewer.md      # own
 └── skills/
+    ├── data-privacy/               # own
     ├── mlflow-log-run/             # own
     ├── skill-creator/              # installed (anthropics/skills)
     └── webapp-testing/             # installed (anthropics/skills)
@@ -39,6 +40,7 @@ Considered but not installed: `mcp-builder` (no MCP server planned yet), `doc-co
 | Name | Type | File | What it does |
 |---|---|---|---|
 | `mlflow-log-run` | Skill | [.claude/skills/mlflow-log-run/SKILL.md](.claude/skills/mlflow-log-run/SKILL.md) | Project conventions for logging a run to `sqlite:///mlflow.db`: set the tracking URI and experiment first, what to log as params/metrics/tags, how to verify the run and open the UI. Never deletes runs or logs secrets. |
+| `data-privacy` | Skill | [.claude/skills/data-privacy/SKILL.md](.claude/skills/data-privacy/SKILL.md) | Data steward for KSA government data. Runs before any dataset is used for training: NDMO classification, PDPL legal basis, PII scan (`scripts/pii_scan.py` detects Saudi National ID/Iqama, mobiles, SA IBANs, emails, sensitive PDPL categories, k-anonymity), minimisation, pseudonymisation, KSA residency, retention. Verdict APPROVED / CONDITIONAL / BLOCKED is logged as `privacy.*` tags on the MLflow run. |
 | `experiment-reviewer` | Agent | [.claude/agents/experiment-reviewer.md](.claude/agents/experiment-reviewer.md) | Read-only subagent (Sonnet; Read/Grep/Glob/Bash) that compares runs in `mlflow.db`, picks the best run per metric, flags gaps (missing metrics, no `git_commit` tag, failed runs) and suggests next experiments. |
 
 ### Checking what Claude Code sees
@@ -70,3 +72,18 @@ to the `claude-code-usage` experiment in `mlflow.db` (one run per session, updat
 - Tags: `project`, `session_id`, `git_branch`, `primary_model`, `first_prompt`.
 - Traces: one trace per prompt, made of an agent span, a span per LLM call (model and token usage) and a span per tool call.
   These feed the GenAI **Traces**, **Sessions** and **Dashboard** pages, where MLflow also estimates cost. Turns that are already logged are skipped.
+
+## Data-privacy gate (KSA PDPL / NDMO)
+
+[.claude/hooks/privacy_gate.py](.claude/hooks/privacy_gate.py) is a project `PreToolUse` hook
+(registered in [.claude/settings.json](.claude/settings.json)) on every Bash/PowerShell call. When Claude
+runs a Python script that trains a model, every local dataset the script references must have an
+`APPROVED` or `CONDITIONAL` entry with the same SHA-256 in `.claude/privacy/approvals.jsonl`; otherwise the
+command is denied and Claude is told to run the `data-privacy` skill. Database/remote sources it can't hash
+trigger a confirmation prompt instead.
+
+- Record a decision: `python .claude/skills/data-privacy/scripts/record_approval.py <dataset> --report privacy_report.json --verdict APPROVED --classification Restricted --legal-basis "..."`
+  (requires a matching `pii_scan.py` report; sensitive data also needs `--dpo-ref`).
+- The ledger holds hashes and metadata only, no data, and is meant to be committed as the audit trail.
+- Limits: it gates commands Claude runs, not scripts you run yourself in a terminal, and training is
+  detected heuristically (`.fit(`, `.train(`, `Trainer(`, `autolog(`, `loss.backward(` ...).
